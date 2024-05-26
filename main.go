@@ -43,7 +43,7 @@ func (mw *MyWindow) Start() {
 	str := mw.PushBtnStart.Text()
 
 	log.Println(str)
-	if str == btnTextStartCount && str == btnTextStartCountAgain {
+	if str == btnTextStartCount || str == btnTextStartCountAgain {
 		mw.PushBtnStart.SetText(btnTextCountFetalMovement)
 		mw.PushBtnCancel.SetEnabled(!mw.PushBtnCancel.Enabled())
 	}
