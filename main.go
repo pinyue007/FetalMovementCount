@@ -3,19 +3,27 @@ package main
 import (
 	"fmt"
 	"log"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/lxn/win"
+	"github.com/sirupsen/logrus"
+	"gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
 )
 
+// 定义一个全局的 logger 实例
+var logger *logrus.Logger
+
 const btnTextStartCount = "开始数胎动"
 const btnTextCountFetalMovement = "胎动了~点一下"
 const btnTextStartCountAgain = "重新数胎动"
+const countDownDuration = 3600 // 1 hour = 3600 second
 
 var (
 	mutexCounting sync.Mutex
@@ -39,10 +47,30 @@ type MyWindow struct {
 	ni                      *walk.NotifyIcon
 }
 
+// CustomFormatter 是一个自定义的 logrus 格式化器
+type CustomFormatter struct{}
+
+func (f *CustomFormatter) Format(entry *logrus.Entry) ([]byte, error) {
+	timestamp := entry.Time.Format("2006-01-02 15:04:05.000")
+	logLevel := strings.ToUpper(entry.Level.String())
+	message := entry.Message
+
+	// 获取调用者的文件名和行号
+	var file string
+	var line int
+	if entry.HasCaller() {
+		file = filepath.Base(entry.Caller.File)
+		line = entry.Caller.Line
+	}
+
+	logLine := fmt.Sprintf("%s [%s] %s:%d %s\n", timestamp, logLevel, file, line, message)
+	return []byte(logLine), nil
+}
+
 func (mw *MyWindow) Start() {
 	str := mw.PushBtnStart.Text()
 
-	log.Println(str)
+	logger.Info(str)
 	if str == btnTextStartCount || str == btnTextStartCountAgain {
 		mw.PushBtnStart.SetText(btnTextCountFetalMovement)
 		mw.PushBtnCancel.SetEnabled(!mw.PushBtnCancel.Enabled())
@@ -78,7 +106,7 @@ func (mw *MyWindow) Cancel() {
 	if walk.MsgBox(mw, "确认", "您确定要执行此操作吗？", walk.MsgBoxIconQuestion|walk.MsgBoxYesNo) == walk.DlgCmdNo {
 		return
 	} else {
-		log.Println("点击取消按钮处理")
+		logger.Info("点击取消按钮处理")
 		str := mw.PushBtnStart.Text()
 		if str == btnTextCountFetalMovement {
 			mw.PushBtnStart.SetText(btnTextStartCount)
@@ -132,13 +160,13 @@ func (mw *MyWindow) startCountdown() {
 	counting = true
 	mutexCounting.Unlock()
 
-	duration := 3600 // 倒计时持续时间，单位为秒
+	duration := countDownDuration // 倒计时持续时间，单位为秒
 
 	go func() {
 		for i := duration; i > 0; i-- {
 			select {
 			case <-stopCountdown:
-				log.Println("取消倒计时！")
+				logger.Info("取消倒计时！")
 				mutexCounting.Lock()
 				counting = false
 				mutexCounting.Unlock()
@@ -178,7 +206,7 @@ func (mw *MyWindow) setEffectiveCount() {
 
 // 有效胎动次数为：5分钟内有胎动算1次胎动
 func (mw *MyWindow) calcEffectiveCount() {
-	log.Println("计算有效胎动次数。。。")
+	logger.Info("计算有效胎动次数。。。")
 	hasSetEffectiveCount = false
 
 	duration := 100 // 计时5分钟
@@ -187,7 +215,7 @@ func (mw *MyWindow) calcEffectiveCount() {
 		for i := duration; i > 0; i-- {
 			select {
 			case <-stopCountdown:
-				log.Println("取消有效胎动次数倒计时！")
+				logger.Info("取消有效胎动次数倒计时！")
 				mutexHasEffectiveCount.Lock()
 				hasEffectiveCount = false
 				hasSetEffectiveCount = false
@@ -199,7 +227,7 @@ func (mw *MyWindow) calcEffectiveCount() {
 			}
 		}
 
-		log.Println("有效胎动次数倒计时退出！")
+		logger.Info("有效胎动次数倒计时退出！")
 		mutexHasEffectiveCount.Lock()
 		hasEffectiveCount = false
 		hasSetEffectiveCount = false
@@ -207,7 +235,45 @@ func (mw *MyWindow) calcEffectiveCount() {
 	}()
 }
 
+func initLogger() {
+
+	// 配置 lumberjack 实现日志轮转
+	logFile := &lumberjack.Logger{
+		Filename:   "FetalMovementCount.log", // 日志文件路径
+		MaxSize:    10,                       // 每个日志文件最大尺寸（单位：MB）
+		MaxBackups: 3,                        // 保留旧文件的最大数量
+		MaxAge:     90,                       // 保留旧文件的最大天数（单位：天）
+		Compress:   true,                     // 是否压缩/归档旧文件
+	}
+	// 关闭文件，确保所有日志都被写入
+	defer logFile.Close()
+
+	// 创建一个新的 logrus logger 实例
+	logger = logrus.New()
+
+	// 启用调用者信息
+	logger.SetReportCaller(true)
+
+	// 设置日志输出到 lumberjack
+	logger.SetOutput(logFile)
+
+	// 设置日志格式为文本格式
+	logger.SetFormatter(&CustomFormatter{})
+
+	// 设置日志级别
+	logger.SetLevel(logrus.InfoLevel)
+
+	// TEST 记录不同级别的日志
+	// logger.Info("这是一个信息日志")
+	// logger.Warn("这是一个警告日志")
+	// logger.Error("这是一个错误日志")
+}
+
 func main() {
+
+	// 初始化 logger
+	initLogger()
+
 	mw := new(MyWindow)
 	if err := (MainWindow{
 		AssignTo: &mw.MainWindow,
